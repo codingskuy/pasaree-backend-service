@@ -12,6 +12,9 @@ info:
     `POST /auth/daftar` (hanya peran PEMBELI), `GET /saya`, dan
     `PATCH /web/admin/pengguna/{id}/peran` ditambahkan di PSR-BE-003 (asumsi; belum ada di
     kontrak living). Peran di luar PEMBELI hanya diberikan admin.
+    PSR-BE-005 menambah (asumsi): `GET /keranjang`, `POST /pesanan/{id}/batalkan`, `POST /pesanan/{id}/retur`;
+    status induk pesanan = turunan status sub-pesanan per lapak; escrow dilepas saat serah-terima trip tercatat
+    (bukan saat pembeli konfirmasi terima). Trip dan verifikasi serah-terima diproksi ke Lumbung memakai service key.
     PSR-BE-004 menambah (asumsi): `POST /web/lapak`, `POST /web/lapak/{id}/operator`, `GET /web/produk/{id}`,
     `POST /web/produk/{id}/arsipkan`, `GET /web/varian/{id}/harga-riwayat`.
 
@@ -262,10 +265,24 @@ paths:
         '404': { $ref: '#/components/responses/Error404' }
         '500': { $ref: '#/components/responses/Error500' }
   /keranjang:
+    get:
+      operationId: getKeranjang
+      tags: [Keranjang]
+      summary: Keranjang akun (sinkron lintas perangkat)
+      responses:
+        '200':
+          description: Keranjang terhitung dengan harga dan peringatan stok terkini.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Keranjang' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '500': { $ref: '#/components/responses/Error500' }
     put:
       operationId: putKeranjang
       tags: [Keranjang]
       summary: Ubah qty varian di keranjang (qty 0 = hapus)
+      description: qty 0-99. Melebihi stok = 409 `STOK_HABIS` (detail `stok_tersedia`); varian stok 0 tidak dapat dimasukkan. Hanya peran PEMBELI.
       requestBody:
         required: true
         content:
@@ -278,6 +295,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Keranjang' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -287,6 +305,7 @@ paths:
       operationId: postCheckoutPratinjau
       tags: [Checkout]
       summary: Hitung total dari server (klien tidak boleh menghitung sendiri)
+      description: Memvalidasi stok, harga, dan trip Lumbung (checkout tanpa trip valid diblokir, 422 `trip_id`). Pratinjau tidak mereservasi stok; stok dikunci 30 menit saat pesanan dibuat (DIPESAN).
       requestBody:
         required: true
         content:
@@ -299,8 +318,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PratinjauCheckout' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '409':
-          description: Stok atau harga berubah (`STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`); klien wajib menampilkan ulang pratinjau.
+          description: Stok atau harga berubah (`STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PRODUK_TIDAK_TERSEDIA`); klien wajib menampilkan ulang pratinjau. `HARGA_BERUBAH` memuat `detail.varian[{varian_id, harga_lama_idr, harga_baru_idr}]` dan percobaan berikutnya memakai harga baru.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -310,7 +330,7 @@ paths:
     post:
       operationId: postPesanan
       tags: [Checkout]
-      summary: Buat pesanan dari pratinjau
+      summary: Buat pesanan dari keranjang server (satu sub-pesanan per lapak)
       requestBody:
         required: true
         content:
@@ -329,6 +349,7 @@ paths:
                   batas_bayar_hingga: { type: string, format: date-time }
                   total_idr: { $ref: '#/components/schemas/Idr' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -355,7 +376,9 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/PesananRingkas' }
                   cursor_lanjut: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/Error400' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /pesanan/{id}:
     get:
@@ -371,6 +394,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PesananDetail' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '500': { $ref: '#/components/responses/Error500' }
   /pesanan/{id}/bayar:
@@ -398,6 +422,7 @@ paths:
                   status: { type: string, const: DIBAYAR }
                   escrow_id: { type: string, examples: ['ESC-01J0000000000000000000001'] }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -406,12 +431,13 @@ paths:
     post:
       operationId: postPesananIdKonfirmasiTerima
       tags: [Pesanan]
-      summary: Pembeli mengonfirmasi terima (melepas escrow ke payout)
+      summary: Pembeli mengonfirmasi terima
+      description: Sub-pesanan DISERAHKAN_KE_TRIP menjadi SELESAI (pangan segar) atau DITERIMA_PEMBELI (masa retur 1x24 jam, lalu SELESAI otomatis). Escrow dilepas saat serah-terima trip, bukan di sini.
       parameters:
         - { $ref: '#/components/parameters/IdPath' }
       responses:
         '200':
-          description: SELESAI, atau DITERIMA_PEMBELI bila ada sub-pesanan lain belum selesai.
+          description: Status induk setelah konfirmasi (SELESAI bila semua sub selesai; DITERIMA_PEMBELI bila masih ada sub dalam masa retur atau belum diserahkan).
           content:
             application/json:
               schema:
@@ -420,14 +446,78 @@ paths:
                 properties:
                   status: { type: string, enum: [SELESAI, DITERIMA_PEMBELI] }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /pesanan/{id}/batalkan:
+    post:
+      operationId: postPesananIdBatalkan
+      tags: [Pesanan]
+      summary: Pembeli membatalkan pesanan (sebelum serah ke trip)
+      description: |
+        Sebelum bayar: tanpa gerakan dana. Setelah bayar sebelum konfirmasi lapak: refund 100% (ongkir dan biaya layanan kembali karena seluruh checkout batal).
+        Setelah konfirmasi: subtotal dikurangi penalti 10% (floor) ke lapak, ongkir kembali, biaya layanan tidak kembali. Setelah serah ke trip: 409.
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Pesanan DIBATALKAN, stok kembali.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: DIBATALKAN }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /pesanan/{id}/retur:
+    post:
+      operationId: postPesananIdRetur
+      tags: [Pesanan]
+      summary: Ajukan retur sub-pesanan (maks 1x24 jam setelah diterima, non-pangan segar)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub_id, alasan]
+              properties:
+                sub_id: { type: string }
+                alasan: { type: string, minLength: 5, maxLength: 280 }
+      responses:
+        '200':
+          description: Sub-pesanan DIKEMBALIKAN; refund subtotal dari escrow atau dipotong dari payout berikutnya.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: DIKEMBALIKAN }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409':
+          description: Bukan DITERIMA_PEMBELI, masa retur habis (`MASA_RETUR_HABIS`), atau tidak dapat diretur (`TIDAK_DAPAT_DIRETUR`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
   /ulasan:
     post:
       operationId: postUlasan
       tags: [Pesanan]
       summary: Beri ulasan (1 per produk per pesanan, maksimal 7 hari setelah selesai)
+      description: Hanya setelah sub-pesanan produk tersebut DITERIMA_PEMBELI/SELESAI. 409 `ULASAN_SUDAH_ADA`, `ULASAN_KEDALUWARSA`, `STATUS_TIDAK_VALID`. Rating produk dihitung ulang.
       requestBody:
         required: true
         content:
@@ -437,6 +527,7 @@ paths:
         '201':
           description: Ulasan tersimpan.
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -464,7 +555,9 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/TripLumbung' }
                   basi: { type: boolean }
+        '400': { $ref: '#/components/responses/Error400' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/lapak:
     post:
@@ -887,6 +980,7 @@ paths:
       operationId: getWebPesananMasuk
       tags: [Web Lapak]
       summary: Sub-pesanan masuk untuk lapak
+      description: Tanpa `status`, tampil sub-pesanan berjalan (DIBAYAR dan DIKONFIRMASI_LAPAK). `DIKONFIRMASI_MENUNGGU` = alias DIBAYAR (menunggu konfirmasi lapak). Sub berstatus DIPESAN (belum dibayar) tidak tampil.
       parameters:
         - { name: status, in: query, schema: { type: string, examples: [DIKONFIRMASI_MENUNGGU] } }
         - { name: lapak_id, in: query, schema: { type: string } }
@@ -902,6 +996,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/SubPesananMasuk' }
+        '400': { $ref: '#/components/responses/Error400' }
         '401': { $ref: '#/components/responses/Error401' }
         '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -945,7 +1040,7 @@ paths:
       operationId: postWebPesananMasukSubIdSerahTrip
       tags: [Web Lapak]
       summary: Serahkan ke trip Lumbung
-      description: '`kode_serah` wajib cocok dengan pindaian kurir Lumbung; bukti serah menjadi dasar pelepasan escrow.'
+      description: '`kode_serah` diverifikasi ke Lumbung (service key); bukti serah menjadi dasar pelepasan escrow. Lumbung tidak dapat dihubungi = 503 `LUMBUNG_TIDAK_TERSEDIA`; kode tidak cocok atau trip berbeda = 422.'
       parameters:
         - { name: sub_id, in: path, required: true, schema: { type: string } }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -974,6 +1069,7 @@ paths:
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
+        '503': { $ref: '#/components/responses/Error503' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/kurasi/antrean:
     get:
@@ -1137,6 +1233,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Error503:
+      description: Lumbung tidak dapat dihubungi (`LUMBUNG_TIDAK_TERSEDIA`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Error500:
       description: Kesalahan server.
       content:
@@ -1150,7 +1251,7 @@ components:
       properties:
         kode:
           type: string
-          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `AKSES_DITOLAK`, `EMAIL_SUDAH_TERDAFTAR`, `SKU_SUDAH_DIPAKAI`, `STATUS_TIDAK_VALID`, `LAPAK_TIDAK_AKTIF`, `KESALAHAN_SERVER`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
+          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `AKSES_DITOLAK`, `EMAIL_SUDAH_TERDAFTAR`, `SKU_SUDAH_DIPAKAI`, `STATUS_TIDAK_VALID`, `LAPAK_TIDAK_AKTIF`, `PRODUK_TIDAK_TERSEDIA`, `PESANAN_KEDALUWARSA`, `MASA_RETUR_HABIS`, `TIDAK_DAPAT_DIRETUR`, `ULASAN_SUDAH_ADA`, `ULASAN_KEDALUWARSA`, `KONFIRMASI_KEDALUWARSA`, `LUMBUNG_TIDAK_TERSEDIA`, `KESALAHAN_SERVER`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
           examples: [STOK_HABIS]
         pesan: { type: string, examples: [Stok varian berubah.] }
         detail: { type: object, additionalProperties: true }
@@ -1404,8 +1505,9 @@ components:
               type: array
               items:
                 type: object
-                required: [lapak, status, subtotal_idr]
+                required: [sub_id, lapak, status, subtotal_idr]
                 properties:
+                  sub_id: { type: string, description: 'Dipakai pada body POST retur.' }
                   lapak: { $ref: '#/components/schemas/LapakRingkas' }
                   status: { $ref: '#/components/schemas/StatusPesanan' }
                   subtotal_idr: { $ref: '#/components/schemas/Idr' }
