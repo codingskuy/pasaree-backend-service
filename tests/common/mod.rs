@@ -177,6 +177,13 @@ pub struct LumbungPalsu {
     pub mati: Arc<AtomicBool>,
     pub salah_kunci: Arc<AtomicUsize>,
     pub trip: Arc<Mutex<Vec<Value>>>,
+    /// Payload payout yang diterima Lumbung palsu.
+    pub payout: Arc<Mutex<Vec<Value>>>,
+    /// Bila true, endpoint payout membalas 500 (payout gagal).
+    pub payout_gagal: Arc<AtomicBool>,
+    /// Baris rekonsiliasi sisi Lumbung (dibalas apa adanya); `rekon_mati` membalas 500.
+    pub rekon: Arc<Mutex<Vec<Value>>>,
+    pub rekon_mati: Arc<AtomicBool>,
 }
 
 pub async fn lumbung_palsu(kunci_benar: &str) -> LumbungPalsu {
@@ -192,7 +199,36 @@ pub async fn lumbung_palsu(kunci_benar: &str) -> LumbungPalsu {
         mati: Arc<AtomicBool>,
         salah: Arc<AtomicUsize>,
         trip: Arc<Mutex<Vec<Value>>>,
+        payout: Arc<Mutex<Vec<Value>>>,
+        payout_gagal: Arc<AtomicBool>,
+        rekon: Arc<Mutex<Vec<Value>>>,
+        rekon_mati: Arc<AtomicBool>,
         kunci: String,
+    }
+    async fn payout_h(
+        State(s): State<S>,
+        h: HeaderMap,
+        Json(b): Json<Value>,
+    ) -> Result<Json<Value>, axum::http::StatusCode> {
+        cek(&h, &s);
+        if s.payout_gagal.load(Ordering::SeqCst) {
+            return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let ref_l = format!("LMB-PAY-{}", b["payout_id"].as_str().unwrap_or("?"));
+        s.payout.lock().unwrap().push(b);
+        Ok(Json(serde_json::json!({"lumbung_ref": ref_l})))
+    }
+    async fn rekon_h(
+        State(s): State<S>,
+        h: HeaderMap,
+    ) -> Result<Json<Value>, axum::http::StatusCode> {
+        cek(&h, &s);
+        if s.rekon_mati.load(Ordering::SeqCst) {
+            return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        Ok(Json(
+            serde_json::json!({"data": s.rekon.lock().unwrap().clone()}),
+        ))
     }
     fn cek(h: &HeaderMap, s: &S) {
         let ok = h.get("authorization").and_then(|v| v.to_str().ok())
@@ -236,6 +272,10 @@ pub async fn lumbung_palsu(kunci_benar: &str) -> LumbungPalsu {
             "trip_id": "TRP-1", "jadwal_berangkat": (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
             "rute": "Pasar-Titik05", "titik_serah": "TITIK-05", "sisa_kapasitas": 10, "ongkir_idr": 8000
         })])),
+        payout: Arc::new(Mutex::new(Vec::new())),
+        payout_gagal: Arc::new(AtomicBool::new(false)),
+        rekon: Arc::new(Mutex::new(Vec::new())),
+        rekon_mati: Arc::new(AtomicBool::new(false)),
         kunci: kunci_benar.to_string(),
     };
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -246,6 +286,8 @@ pub async fn lumbung_palsu(kunci_benar: &str) -> LumbungPalsu {
             "/internal/pasaree/serah-terima/verifikasi",
             post(verifikasi),
         )
+        .route("/internal/pasaree/payout", post(payout_h))
+        .route("/internal/pasaree/rekonsiliasi", get(rekon_h))
         .with_state(st.clone());
     tokio::spawn(async move { axum::serve(l, router).await.unwrap() });
     LumbungPalsu {
@@ -254,12 +296,17 @@ pub async fn lumbung_palsu(kunci_benar: &str) -> LumbungPalsu {
         mati: st.mati,
         salah_kunci: st.salah,
         trip: st.trip,
+        payout: st.payout,
+        payout_gagal: st.payout_gagal,
+        rekon: st.rekon,
+        rekon_mati: st.rekon_mati,
     }
 }
 
 pub struct Dunia {
     pub app: Router,
     pub db: PgPool,
+    pub state: AppState,
     pub lumbung: LumbungPalsu,
     pub pembeli: String,
     pub pembeli_id: Uuid,
@@ -279,7 +326,8 @@ pub async fn dunia_dengan(db: PgPool, ubah: impl FnOnce(&mut Config)) -> Dunia {
     let lumbung = lumbung_palsu(&cfg.lumbung_service_key).await;
     cfg.lumbung_base_url = lumbung.url.clone();
     ubah(&mut cfg);
-    let app = app_dengan(db.clone(), cfg);
+    let state = AppState::baru(db.clone(), cfg);
+    let app = pasaree::app(state.clone());
     let (pa, prod_a) = seed_pengguna(&db, "a@contoh.id", Peran::Produsen).await;
     let (pb, prod_b) = seed_pengguna(&db, "b@contoh.id", Peran::Produsen).await;
     let (pembeli_id, pembeli) = seed_pengguna(&db, "pembeli@contoh.id", Peran::Pembeli).await;
@@ -308,6 +356,7 @@ pub async fn dunia_dengan(db: PgPool, ubah: impl FnOnce(&mut Config)) -> Dunia {
     Dunia {
         app,
         db,
+        state,
         lumbung,
         pembeli,
         pembeli_id,
