@@ -9,6 +9,7 @@ pub struct Config {
     pub port: u16,
     pub lumbung_base_url: String,
     pub lumbung_service_key: String,
+    pub media_base_url: String,
 }
 
 impl Config {
@@ -29,6 +30,8 @@ impl Config {
                 .unwrap_or(8101),
             lumbung_base_url: wajib("LUMBUNG_BASE_URL")?,
             lumbung_service_key: wajib("LUMBUNG_SERVICE_KEY")?,
+            media_base_url: std::env::var("MEDIA_BASE_URL")
+                .unwrap_or_else(|_| "https://media.pasaree.chefgenie.id".into()),
         })
     }
 
@@ -42,6 +45,7 @@ impl Config {
             port: 0,
             lumbung_base_url: "http://127.0.0.1:1".into(),
             lumbung_service_key: "kunci-layanan-uji".into(),
+            media_base_url: "https://media.uji.pasaree".into(),
         }
     }
 }

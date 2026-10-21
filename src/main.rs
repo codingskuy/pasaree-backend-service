@@ -14,6 +14,7 @@ async fn main() {
         .run(&db)
         .await
         .expect("migrasi");
+    tokio::spawn(pasaree::tugas::jalankan_berkala(db.clone()));
     let port = config.port;
     let pendengar = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await

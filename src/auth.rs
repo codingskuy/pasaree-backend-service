@@ -180,6 +180,15 @@ impl FromRequestParts<AppState> for PenggunaOpsional {
     }
 }
 
+/// Tanda tangan HMAC-SHA256 (base64url) untuk URL unggah media presigned.
+pub fn tanda_tangan(cfg: &Config, data: &str) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<Sha256>::new_from_slice(format!("{}|media", cfg.jwt_secret).as_bytes())
+        .expect("kunci hmac");
+    mac.update(data.as_bytes());
+    URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+}
+
 pub fn hash_sandi(sandi: &str) -> AppResult<String> {
     let garam = SaltString::generate(&mut OsRng);
     Argon2::default()
@@ -389,7 +398,7 @@ async fn saya(State(s): State<AppState>, p: Pengguna) -> AppResult<Json<Saya>> {
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub struct UbahPeranRequest {
     pub peran: Peran,
 }
@@ -399,7 +408,7 @@ async fn ubah_peran(
     State(s): State<AppState>,
     p: Pengguna,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(req): Json<UbahPeranRequest>,
+    ApiJson(req): ApiJson<UbahPeranRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     p.wajib(&[Peran::Admin])?;
     let uid = ids::dari_ulid(&id, "").ok_or_else(|| {
