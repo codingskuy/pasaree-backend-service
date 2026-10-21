@@ -12,6 +12,9 @@ info:
     `POST /auth/daftar` (hanya peran PEMBELI), `GET /saya`, dan
     `PATCH /web/admin/pengguna/{id}/peran` ditambahkan di PSR-BE-003 (asumsi; belum ada di
     kontrak living). Peran di luar PEMBELI hanya diberikan admin.
+    PSR-BE-006 menambah (asumsi): `GET /web/komisi/tarif`, `GET /web/lapak/{id}/payout`, `POST /web/admin/rekonsiliasi`,
+    `GET /web/admin/tiket-rekonsiliasi`; `komisi_idr` dan `estimasi_payout_idr` pada pesanan masuk; `alasan` opsional pada
+    `PATCH /web/admin/komisi`. Komisi dipotong dari payout lapak (bukan dari pembeli), payout dieksekusi Lumbung T+1 hari kerja.
     PSR-BE-005 menambah (asumsi): `GET /keranjang`, `POST /pesanan/{id}/batalkan`, `POST /pesanan/{id}/retur`;
     status induk pesanan = turunan status sub-pesanan per lapak; escrow dilepas saat serah-terima trip tercatat
     (bukan saat pembeli konfirmasi terima). Trip dan verifikasi serah-terima diproksi ke Lumbung memakai service key.
@@ -1147,6 +1150,7 @@ paths:
       operationId: patchWebAdminKomisi
       tags: [Web Admin]
       summary: Ubah tarif komisi default (hanya admin; diumumkan 14 hari sebelum berlaku)
+      description: Riwayat tarif append-only (tarif_persen, berlaku_mulai, diubah_oleh, alasan). `berlaku_mulai` minimal 14 hari dari hari ini (WIB), jika tidak 422. Pesanan yang sudah dibayar memakai tarif yang berlaku saat bayar (komisi dibekukan).
       requestBody:
         required: true
         content:
@@ -1157,6 +1161,7 @@ paths:
               properties:
                 tarif_default_persen: { type: integer, minimum: 0, maximum: 100, examples: [8] }
                 berlaku_mulai: { type: string, format: date, examples: ['2026-11-01'] }
+                alasan: { type: string, minLength: 3, maxLength: 280 }
       responses:
         '200':
           description: Perubahan tercatat (riwayat tarif append-only).
@@ -1175,6 +1180,117 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/komisi/tarif:
+    get:
+      operationId: getWebKomisiTarif
+      tags: [Web Lapak]
+      summary: Tarif komisi berlaku (kalkulator transparansi komisi untuk lapak)
+      description: Komisi dipotong dari payout lapak, bukan dari pembeli. Tarif default 8%, paket-hampers 10%, lapak baru 5% selama 30 hari sejak produk pertama tayang (mengalahkan tarif lain).
+      parameters:
+        - { name: lapak_id, in: query, description: Bila diisi, menyertakan masa promo lapak baru., schema: { type: string } }
+      responses:
+        '200':
+          description: Tarif efektif hari ini dan perubahan terjadwal.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tarif_default_persen, tarif_hampers_persen, tarif_lapak_baru_persen, perubahan_terjadwal]
+                properties:
+                  tarif_default_persen: { type: integer }
+                  tarif_hampers_persen: { type: integer }
+                  tarif_lapak_baru_persen: { type: integer }
+                  promo_lapak_baru_hingga: { type: [string, 'null'], format: date-time }
+                  perubahan_terjadwal:
+                    type: array
+                    items:
+                      type: object
+                      required: [kode, tarif_persen, berlaku_mulai]
+                      properties:
+                        kode: { type: string, enum: [DEFAULT, HAMPERS, LAPAK_BARU] }
+                        tarif_persen: { type: integer }
+                        berlaku_mulai: { type: string, format: date }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/lapak/{id}/payout:
+    get:
+      operationId: getWebLapakIdPayout
+      tags: [Web Lapak]
+      summary: Daftar payout lapak (komisi, potongan, jadwal T+1 hari kerja, status)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Payout terbaru (maks 200).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Payout' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/admin/rekonsiliasi:
+    post:
+      operationId: postWebAdminRekonsiliasi
+      tags: [Web Admin]
+      summary: Jalankan rekonsiliasi Pasaree-Lumbung untuk satu tanggal (default kemarin WIB; juga berjalan otomatis harian)
+      description: Selisih lebih dari Rp1.000 atau status menggantung lebih dari 2x24 jam membuat tiket prioritas tinggi. Idempoten per tanggal; Lumbung tidak merespons dicatat `GAGAL_LUMBUNG` dan dapat diulang.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tanggal: { type: string, format: date }
+      responses:
+        '200':
+          description: Ringkasan jalan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tanggal, status, jumlah_baris, tiket_baru]
+                properties:
+                  tanggal: { type: string, format: date }
+                  status: { type: string, enum: [SELESAI, GAGAL_LUMBUNG] }
+                  jumlah_baris: { type: integer }
+                  tiket_baru: { type: integer }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/admin/tiket-rekonsiliasi:
+    get:
+      operationId: getWebAdminTiketRekonsiliasi
+      tags: [Web Admin]
+      summary: Tiket rekonsiliasi prioritas tinggi
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [TERBUKA, SELESAI] } }
+      responses:
+        '200':
+          description: Tiket terbaru (maks 200).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TiketRekonsiliasi' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
 components:
   securitySchemes:
@@ -1593,10 +1709,38 @@ components:
             properties:
               kolom: { type: string }
               pesan: { type: string }
+    Payout:
+      type: object
+      required: [payout_id, sub_id, pesanan_id, jenis, subtotal_idr, komisi_idr, potongan_idr, jumlah_idr, status, jadwal_payout]
+      properties:
+        payout_id: { type: string, examples: ['PAY-01J0000000000000000000001'] }
+        sub_id: { type: string }
+        pesanan_id: { type: string }
+        jenis: { type: string, enum: [PENJUALAN, PENALTI] }
+        subtotal_idr: { $ref: '#/components/schemas/Idr' }
+        komisi_idr: { $ref: '#/components/schemas/Idr' }
+        potongan_idr: { allOf: [{ $ref: '#/components/schemas/Idr' }], description: Potongan refund/retur setelah payout sebelumnya. }
+        jumlah_idr: { allOf: [{ $ref: '#/components/schemas/Idr' }], description: subtotal - komisi (sebelum potongan). }
+        status: { type: string, enum: [MENUNGGU, MENGIRIM, DIKIRIM, TERBAYAR, DIBATALKAN] }
+        jadwal_payout: { type: string, format: date, description: T+1 hari kerja setelah serah-terima trip. }
+    TiketRekonsiliasi:
+      type: object
+      required: [id, jenis, prioritas, pesanan_id, selisih_idr, rincian, status, dibuat_pada]
+      properties:
+        id: { type: string }
+        jenis: { type: string, enum: [SELISIH, GANTUNG] }
+        prioritas: { type: string, examples: [TINGGI] }
+        pesanan_id: { type: string }
+        selisih_idr: { type: integer }
+        rincian: { type: object, additionalProperties: true }
+        status: { type: string, enum: [TERBUKA, SELESAI] }
+        dibuat_pada: { type: string, format: date-time }
     SubPesananMasuk:
       type: object
       required: [sub_id, pesanan_id, varian, total_idr, batas_konfirmasi_hingga, trip_id]
       properties:
+        komisi_idr: { type: [integer, 'null'], description: Komisi platform atas sub-pesanan ini (dipotong dari payout lapak). }
+        estimasi_payout_idr: { type: [integer, 'null'], description: total_idr dikurangi komisi_idr. }
         sub_id: { type: string }
         pesanan_id: { type: string }
         varian:

@@ -26,3 +26,8 @@ Belum ada kontrak Pasaree di OpenAPI Lumbung; Pasaree mengasumsikan dua endpoint
 
 - `GET /internal/pasaree/trip?dari=&sampai=&titik_id=` -> `{"data": [{"trip_id", "jadwal_berangkat", "rute", "titik_serah", "sisa_kapasitas", "ongkir_idr"}]}`. Dicache 60 detik per kombinasi query; bila gagal, cache terakhir dengan `basi: true`.
 - `POST /internal/pasaree/serah-terima/verifikasi` dengan `{"trip_id", "kode_serah", "sub_id", "pesanan_id"}` -> `{"cocok": true, "bukti_id": "..."}`. Status 404/409/422 diperlakukan sebagai kode tidak cocok; kegagalan lain = 503.
+
+Tambahan kontrak asumsi Lumbung (PSR-BE-006), juga dengan service key:
+
+- `POST /internal/pasaree/payout` dengan `{"payout_id": "PAY-...", "lapak_id", "pesanan_id", "sub_id", "jenis": "PENJUALAN|PENALTI", "jumlah_idr", "rincian": {"subtotal_idr", "komisi_idr", "potongan_idr"}}` -> `{"lumbung_ref": "..."}`. Lumbung wajib idempoten terhadap `payout_id`; Pasaree mengulang pengiriman bila gagal. Rekening lapak dikelola Lumbung (Pasaree hanya menyimpan 4 digit terakhir).
+- `GET /internal/pasaree/rekonsiliasi?tanggal=YYYY-MM-DD` -> `{"data": [{"pesanan_id": "PSR-...", "escrow_id": "ESC-...", "subtotal_idr", "komisi_idr", "ongkir_idr", "payout_idr", "status"}]}`.
