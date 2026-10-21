@@ -13,7 +13,19 @@ pub struct LumbungClient {
 }
 
 #[derive(Debug)]
-pub struct LumbungGagal(pub String);
+pub struct LumbungGagal {
+    pub status: Option<u16>,
+    pub pesan: String,
+}
+
+impl LumbungGagal {
+    fn jaringan(e: impl ToString) -> Self {
+        Self {
+            status: None,
+            pesan: e.to_string(),
+        }
+    }
+}
 
 impl LumbungClient {
     pub fn baru(base_url: &str, service_key: &str) -> Self {
@@ -45,13 +57,14 @@ impl LumbungClient {
             .query(query)
             .send()
             .await
-            .map_err(|e| LumbungGagal(e.to_string()))?;
+            .map_err(LumbungGagal::jaringan)?;
         if !resp.status().is_success() {
-            return Err(LumbungGagal(format!("status {}", resp.status())));
+            return Err(LumbungGagal {
+                status: Some(resp.status().as_u16()),
+                pesan: format!("status {}", resp.status()),
+            });
         }
-        resp.json::<T>()
-            .await
-            .map_err(|e| LumbungGagal(e.to_string()))
+        resp.json::<T>().await.map_err(LumbungGagal::jaringan)
     }
 
     pub async fn post_json<B: serde::Serialize, T: DeserializeOwned>(
@@ -64,12 +77,13 @@ impl LumbungClient {
             .json(badan)
             .send()
             .await
-            .map_err(|e| LumbungGagal(e.to_string()))?;
+            .map_err(LumbungGagal::jaringan)?;
         if !resp.status().is_success() {
-            return Err(LumbungGagal(format!("status {}", resp.status())));
+            return Err(LumbungGagal {
+                status: Some(resp.status().as_u16()),
+                pesan: format!("status {}", resp.status()),
+            });
         }
-        resp.json::<T>()
-            .await
-            .map_err(|e| LumbungGagal(e.to_string()))
+        resp.json::<T>().await.map_err(LumbungGagal::jaringan)
     }
 }

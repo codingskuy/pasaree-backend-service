@@ -25,6 +25,8 @@ pub enum AppError {
     },
     /// 422 — validasi per kolom: `[{kolom, pesan}]`.
     Validasi(Vec<KesalahanKolom>),
+    /// 503 — Lumbung tidak dapat dihubungi.
+    Hulu(String),
     /// 500 — kesalahan server (detail hanya di log).
     Internal(String),
 }
@@ -86,6 +88,12 @@ impl IntoResponse for AppError {
                 Some(
                     json!({ "kesalahan": k.iter().map(|e| json!({"kolom": e.kolom, "pesan": e.pesan})).collect::<Vec<_>>() }),
                 ),
+            ),
+            AppError::Hulu(p) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "LUMBUNG_TIDAK_TERSEDIA",
+                p,
+                None,
             ),
             AppError::Internal(log) => {
                 tracing::error!(kesalahan = %log, "kesalahan internal");

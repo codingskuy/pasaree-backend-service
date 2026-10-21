@@ -10,6 +10,7 @@ pub struct Config {
     pub lumbung_base_url: String,
     pub lumbung_service_key: String,
     pub media_base_url: String,
+    pub trip_cache_detik: u64,
 }
 
 impl Config {
@@ -30,6 +31,10 @@ impl Config {
                 .unwrap_or(8101),
             lumbung_base_url: wajib("LUMBUNG_BASE_URL")?,
             lumbung_service_key: wajib("LUMBUNG_SERVICE_KEY")?,
+            trip_cache_detik: std::env::var("TRIP_CACHE_DETIK")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
             media_base_url: std::env::var("MEDIA_BASE_URL")
                 .unwrap_or_else(|_| "https://media.pasaree.chefgenie.id".into()),
         })
@@ -46,6 +51,7 @@ impl Config {
             lumbung_base_url: "http://127.0.0.1:1".into(),
             lumbung_service_key: "kunci-layanan-uji".into(),
             media_base_url: "https://media.uji.pasaree".into(),
+            trip_cache_detik: 60,
         }
     }
 }
