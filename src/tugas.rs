@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use sqlx::PgPool;
+use crate::state::AppState;
 
 fn lapor(nama: &str, hasil: crate::error::AppResult<u64>) {
     match hasil {
@@ -12,9 +12,10 @@ fn lapor(nama: &str, hasil: crate::error::AppResult<u64>) {
     }
 }
 
-/// Tiap menit: batas bayar 30 menit, batas konfirmasi lapak, terima otomatis, masa retur.
-/// Tiap jam: arsip draf PERLU_REVISI > 7 hari.
-pub async fn jalankan_berkala(db: PgPool) {
+/// Tiap menit: batas bayar 30 menit, batas konfirmasi lapak, terima otomatis, masa retur, payout jatuh tempo (T+1),
+/// rekonsiliasi kemarin bila belum selesai. Tiap jam: arsip draf PERLU_REVISI > 7 hari.
+pub async fn jalankan_berkala(s: AppState) {
+    let db = s.db.clone();
     let mut tiap_menit = tokio::time::interval(Duration::from_secs(60));
     let mut tick: u64 = 0;
     loop {
@@ -34,6 +35,14 @@ pub async fn jalankan_berkala(db: PgPool) {
         lapor(
             "selesaikan_masa_retur",
             crate::pesanan::selesaikan_masa_retur(&db).await,
+        );
+        lapor(
+            "eksekusi_payout",
+            crate::keuangan::eksekusi_payout_jatuh_tempo(&s).await,
+        );
+        lapor(
+            "rekonsiliasi_harian",
+            crate::keuangan::rekonsiliasi_kemarin_jika_perlu(&s).await,
         );
         if tick.is_multiple_of(60) {
             lapor(

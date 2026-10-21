@@ -45,6 +45,7 @@ struct BarisMasuk {
     subtotal_idr: i64,
     batas_konfirmasi_hingga: Option<DateTime<Utc>>,
     trip_id: String,
+    komisi_idr: Option<i64>,
 }
 
 async fn pesanan_masuk(
@@ -76,7 +77,7 @@ async fn pesanan_masuk(
     };
     // Tanpa filter status: sub-pesanan yang masih berjalan sisi lapak (DIBAYAR, DIKONFIRMASI_LAPAK).
     let rows: Vec<BarisMasuk> = sqlx::query_as(
-        "SELECT sp.id, sp.pesanan_id, sp.subtotal_idr, sp.batas_konfirmasi_hingga, sp.trip_id \
+        "SELECT sp.id, sp.pesanan_id, sp.subtotal_idr, sp.batas_konfirmasi_hingga, sp.trip_id, sp.komisi_idr \
          FROM sub_pesanan sp WHERE sp.status <> 'DIPESAN' \
            AND (($1::text IS NULL AND sp.status IN ('DIBAYAR','DIKONFIRMASI_LAPAK')) OR sp.status = $1) \
            AND ($2::uuid IS NULL OR sp.lapak_id = $2) \
@@ -98,6 +99,7 @@ async fn pesanan_masuk(
         subtotal_idr: total,
         batas_konfirmasi_hingga: batas,
         trip_id: trip,
+        komisi_idr: komisi,
     } in rows
     {
         let varian: Vec<(String, i32)> = sqlx::query_as(
@@ -111,6 +113,8 @@ async fn pesanan_masuk(
             "pesanan_id": ids::dengan_awalan(AWALAN_PESANAN, pesanan),
             "varian": varian.iter().map(|v| json!({"sku": v.0, "qty": v.1})).collect::<Vec<_>>(),
             "total_idr": total,
+            "komisi_idr": komisi,
+            "estimasi_payout_idr": komisi.map(|k| total - k),
             "batas_konfirmasi_hingga": batas,
             "trip_id": trip,
         }));

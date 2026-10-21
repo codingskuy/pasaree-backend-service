@@ -377,6 +377,17 @@ pub async fn batalkan_sub(
         .await?;
         let r = hitung_refund(info.subtotal_idr, ongkir, biaya as i64, fase, sisa == 0);
         catat_refund(c, info.pesanan_id, Some(sub_id), &r).await?;
+        crate::keuangan::catat_audit(
+            c,
+            "REFUND_BATAL",
+            Some(info.pesanan_id),
+            Some(sub_id),
+            None,
+            Some(r.refund_idr),
+            json!({"alasan": alasan, "penalti_idr": r.penalti_idr, "fase": format!("{fase:?}")}),
+        )
+        .await?;
+        crate::keuangan::buat_payout_penalti(c, sub_id, r.penalti_idr).await?;
     }
     sinkron_induk(c, info.pesanan_id).await?;
     Ok(())
@@ -677,6 +688,18 @@ async fn bayar(
             .execute(&mut *tx)
             .await?;
     }
+    // Komisi lapak dibekukan saat bayar; dipotong dari payout lapak, bukan dari pembeli.
+    crate::keuangan::hitung_dan_simpan_komisi(&mut tx, pid).await?;
+    crate::keuangan::catat_audit(
+        &mut tx,
+        "ESCROW_DITAHAN",
+        Some(pid),
+        None,
+        None,
+        Some(total),
+        json!({"escrow_id": ids::dengan_awalan(AWALAN_ESCROW, escrow_id), "metode": req.metode.sebagai_str(), "referensi_kasir": referensi}),
+    )
+    .await?;
     sinkron_induk(&mut tx, pid).await?;
     let resp =
         json!({"status": "DIBAYAR", "escrow_id": ids::dengan_awalan(AWALAN_ESCROW, escrow_id)});
@@ -813,6 +836,17 @@ async fn retur(
         },
     )
     .await?;
+    crate::keuangan::catat_audit(
+        &mut tx,
+        "REFUND_RETUR",
+        Some(b.id),
+        Some(sub),
+        None,
+        Some(subtotal),
+        json!({"alasan": req.alasan}),
+    )
+    .await?;
+    crate::keuangan::tangani_retur(&mut tx, sub).await?;
     sinkron_induk(&mut tx, b.id).await?;
     tx.commit().await?;
     Ok(Json(json!({"status": "DIKEMBALIKAN"})))

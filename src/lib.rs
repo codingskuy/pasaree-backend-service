@@ -45,6 +45,7 @@ pub fn app(state: AppState) -> Router {
         .merge(katalog::rute())
         .merge(lapak::rute())
         .merge(kurasi::rute())
+        .merge(keuangan::rute())
         .merge(trip::rute())
         .merge(keranjang::rute())
         .merge(pesanan::rute())

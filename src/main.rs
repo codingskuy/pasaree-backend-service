@@ -14,13 +14,12 @@ async fn main() {
         .run(&db)
         .await
         .expect("migrasi");
-    tokio::spawn(pasaree::tugas::jalankan_berkala(db.clone()));
     let port = config.port;
+    let state = AppState::baru(db, config);
+    tokio::spawn(pasaree::tugas::jalankan_berkala(state.clone()));
     let pendengar = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .expect("bind port");
     tracing::info!(port, "pasaree-backend-service jalan");
-    axum::serve(pendengar, app(AppState::baru(db, config)))
-        .await
-        .expect("serve");
+    axum::serve(pendengar, app(state)).await.expect("serve");
 }
