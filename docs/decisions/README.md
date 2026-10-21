@@ -10,3 +10,4 @@ Cara menambah ADR:
 Daftar:
 
 - [ADR-0001 — Fondasi teknis](./ADR-0001-fondasi-teknis.md)
+- [ADR-0002 — Keuangan: komisi, escrow, payout T+1, rekonsiliasi](./ADR-0002-keuangan-escrow-payout-rekonsiliasi.md)
