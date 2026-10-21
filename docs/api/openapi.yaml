@@ -9,6 +9,11 @@ info:
     di Pasaree-TownHall, serta aturan keuangan `platform/versions/v1.0.0/BRD/30-keuangan-komisi.md`.
     Endpoint `/auth/*` diturunkan dari model JWT divisi (akses 15 menit, refresh 7 hari
     dengan reuse-detection), karena kontrak living belum merinci login/refresh.
+    `POST /auth/daftar` (hanya peran PEMBELI), `GET /saya`, dan
+    `PATCH /web/admin/pengguna/{id}/peran` ditambahkan di PSR-BE-003 (asumsi; belum ada di
+    kontrak living). Peran di luar PEMBELI hanya diberikan admin.
+
+    Kegagalan peran mengembalikan 403 `AKSES_DITOLAK`; token tanpa `aud: pasaree` 401.
 
     Aturan utama:
     - Uang selalu integer IDR (tanpa sen). Komisi dibulatkan ke bawah (`floor()`) per baris.
@@ -22,9 +27,11 @@ info:
 servers:
   - url: https://api.pasaree.chefgenie.id/v1
     description: Produksi (placeholder resmi)
-  - url: http://localhost:8080
+  - url: http://localhost:8101
     description: Lokal
 tags:
+  - name: Sistem
+    description: Kesehatan layanan.
   - name: Auth
     description: Login dan perpanjangan token (audiens `pasaree`).
   - name: Katalog
@@ -46,6 +53,94 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /kesehatan:
+    get:
+      operationId: getKesehatan
+      tags: [Sistem]
+      summary: Kesehatan layanan dan koneksi DB `pasaree`
+      security: []
+      responses:
+        '200':
+          description: Layanan sehat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [layanan, status, db]
+                properties:
+                  layanan: { type: string, examples: [pasaree-backend-service] }
+                  status: { type: string, examples: [baik] }
+                  db: { type: string, examples: [pasaree] }
+        '500': { $ref: '#/components/responses/Error500' }
+  /auth/daftar:
+    post:
+      operationId: postAuthDaftar
+      tags: [Auth]
+      summary: Daftar akun pembeli dan terima token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DaftarRequest'
+      responses:
+        '201':
+          description: Akun PEMBELI dibuat; token diterbitkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400': { $ref: '#/components/responses/Error400' }
+        '409': { $ref: '#/components/responses/Error409' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /saya:
+    get:
+      operationId: getSaya
+      tags: [Auth]
+      summary: Profil akun yang sedang masuk
+      responses:
+        '200':
+          description: Profil akun.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Saya'
+        '401': { $ref: '#/components/responses/Error401' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/admin/pengguna/{id}/peran:
+    patch:
+      operationId: patchWebAdminPenggunaIdPeran
+      tags: [Web Admin]
+      summary: Tetapkan peran akun (hanya admin)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peran]
+              properties:
+                peran: { $ref: '#/components/schemas/Peran' }
+      responses:
+        '200':
+          description: Peran diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, peran]
+                properties:
+                  id: { type: string }
+                  peran: { $ref: '#/components/schemas/Peran' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
   /auth/login:
     post:
       operationId: postAuthLogin
@@ -382,6 +477,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/LapakSaya' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/lapak/{id}:
     patch:
@@ -408,6 +504,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/LapakSaya' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -444,6 +541,7 @@ paths:
                         perlu_revisi_catatan: { type: [string, 'null'] }
                   cursor_lanjut: { type: [string, 'null'] }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/produk/draf:
     post:
@@ -469,6 +567,7 @@ paths:
                   produk_id: { type: string }
                   status: { type: string, const: DRAF }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/produk/{id}:
@@ -512,6 +611,7 @@ paths:
                   produk_id: { type: string }
                   cek_otomatis: { $ref: '#/components/schemas/CekOtomatis' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -534,6 +634,7 @@ paths:
                   status: { type: string, const: MENUNGGU_KURASI }
                   estimasi_sla: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422':
           description: Cek otomatis gagal.
@@ -570,6 +671,7 @@ paths:
                   media_url: { type: string, format: uri }
                   kedaluwarsa: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/varian/{id}/stok:
@@ -601,6 +703,7 @@ paths:
                   stok: { type: integer, minimum: 0 }
                   status_produk: { $ref: '#/components/schemas/ProdukStatus' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -632,6 +735,7 @@ paths:
                   harga_idr: { $ref: '#/components/schemas/HargaIdr' }
                   kurasi_ulang_ringan: { type: boolean }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -656,6 +760,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/SubPesananMasuk' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/pesanan-masuk/{sub_id}/konfirmasi:
     post:
@@ -687,6 +792,7 @@ paths:
                 properties:
                   status: { $ref: '#/components/schemas/StatusPesanan' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -721,6 +827,7 @@ paths:
                 properties:
                   status: { type: string, const: DISERAHKAN_KE_TRIP }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -757,6 +864,7 @@ paths:
                         prioritas_pangan_segar: { type: boolean }
                   cursor_lanjut: { type: [string, 'null'] }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/kurasi/{produk_id}/keputusan:
     post:
@@ -789,6 +897,7 @@ paths:
                 properties:
                   status: { $ref: '#/components/schemas/ProdukStatus' }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
@@ -820,6 +929,7 @@ paths:
                   tarif_persen: { type: integer }
                   berlaku_mulai: { type: string, format: date }
         '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
         '422':
           description: Tanggal berlaku kurang dari 14 hari dari pengumuman atau input tidak valid.
           content:
@@ -863,6 +973,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Error403:
+      description: Peran akun tidak berhak (`AKSES_DITOLAK`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Error404:
       description: Sumber daya tidak ditemukan (`PESANAN_TIDAK_DITEMUKAN` dan sejenisnya).
       content:
@@ -891,7 +1006,7 @@ components:
       properties:
         kode:
           type: string
-          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
+          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `AKSES_DITOLAK`, `EMAIL_SUDAH_TERDAFTAR`, `KESALAHAN_SERVER`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
           examples: [STOK_HABIS]
         pesan: { type: string, examples: [Stok varian berubah.] }
         detail: { type: object, additionalProperties: true }
@@ -922,6 +1037,24 @@ components:
     StatusPesanan:
       type: string
       enum: [DRAF_KERANJANG, DIPESAN, DIBAYAR, DIKONFIRMASI_LAPAK, DISERAHKAN_KE_TRIP, DITERIMA_PEMBELI, SELESAI, DIBATALKAN, DIKEMBALIKAN]
+    Peran:
+      type: string
+      enum: [PRODUSEN, OPERATOR, KURATOR, ADMIN, PEMBELI]
+    DaftarRequest:
+      type: object
+      required: [email, kata_sandi, nama]
+      properties:
+        email: { type: string, format: email }
+        kata_sandi: { type: string, format: password, minLength: 8, maxLength: 128 }
+        nama: { type: string, minLength: 2, maxLength: 80 }
+    Saya:
+      type: object
+      required: [id, email, nama, peran]
+      properties:
+        id: { type: string, examples: ['01J0000000000000000000009'] }
+        email: { type: string, format: email }
+        nama: { type: string }
+        peran: { $ref: '#/components/schemas/Peran' }
     LoginRequest:
       type: object
       required: [email, kata_sandi]
