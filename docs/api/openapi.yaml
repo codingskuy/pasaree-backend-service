@@ -12,6 +12,8 @@ info:
     `POST /auth/daftar` (hanya peran PEMBELI), `GET /saya`, dan
     `PATCH /web/admin/pengguna/{id}/peran` ditambahkan di PSR-BE-003 (asumsi; belum ada di
     kontrak living). Peran di luar PEMBELI hanya diberikan admin.
+    PSR-BE-004 menambah (asumsi): `POST /web/lapak`, `POST /web/lapak/{id}/operator`, `GET /web/produk/{id}`,
+    `POST /web/produk/{id}/arsipkan`, `GET /web/varian/{id}/harga-riwayat`.
 
     Kegagalan peran mengembalikan 403 `AKSES_DITOLAK`; token tanpa `aud: pasaree` 401.
 
@@ -191,6 +193,10 @@ paths:
       operationId: getKatalogProduk
       tags: [Katalog]
       summary: Daftar produk tayang
+      description: |
+        Hanya produk TAYANG dari lapak AKTIF; harga dan stok real-time. `limit` 1-50 (default 20), di luar rentang = 400.
+        `cursor_lanjut` null bila halaman terakhir. `harga_berubah` true bila minimal satu produk pada halaman
+        mengalami perubahan harga dalam 10 menit terakhir (klien yang meng-cache wajib menyegarkan; asumsi PSR-BE-004).
       security: [{}, { bearerAuth: [] }]
       parameters:
         - { name: q, in: query, schema: { type: string } }
@@ -227,6 +233,7 @@ paths:
       operationId: getKatalogProdukId
       tags: [Katalog]
       summary: Detail produk tayang
+      description: Produk TAYANG atau NONAKTIF_STOK_0 (stok 0 tetap terbaca); selain itu 404.
       security: [{}, { bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/IdPath' }
@@ -459,6 +466,65 @@ paths:
                   basi: { type: boolean }
         '401': { $ref: '#/components/responses/Error401' }
         '500': { $ref: '#/components/responses/Error500' }
+  /web/lapak:
+    post:
+      operationId: postWebLapak
+      tags: [Web Lapak]
+      summary: Daftarkan lapak (membuat produsen bila belum ada; peran PRODUSEN)
+      description: Satu produsen satu lapak. Nomor rekening hanya disimpan tersensor (4 digit terakhir); eksekusi payout memakai skema Lumbung.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LapakBuat' }
+      responses:
+        '201':
+          description: Lapak dibuat berstatus AKTIF.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LapakSaya' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '409':
+          description: Konflik (`LAPAK_SUDAH_ADA`, `SLUG_SUDAH_DIPAKAI`, `NAMA_LAPAK_SUDAH_DIPAKAI`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/lapak/{id}/operator:
+    post:
+      operationId: postWebLapakIdOperator
+      tags: [Web Lapak]
+      summary: Tambah operator lapak (akun berperan OPERATOR; hanya produsen pemilik/admin)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Operator ditambahkan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lapak_id, pengguna_id]
+                properties:
+                  lapak_id: { type: string }
+                  pengguna_id: { type: string }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
   /web/lapak-saya:
     get:
       operationId: getWebLapakSaya
@@ -540,6 +606,7 @@ paths:
                         status: { $ref: '#/components/schemas/ProdukStatus' }
                         perlu_revisi_catatan: { type: [string, 'null'] }
                   cursor_lanjut: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/Error400' }
         '401': { $ref: '#/components/responses/Error401' }
         '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -568,13 +635,37 @@ paths:
                   status: { type: string, const: DRAF }
         '401': { $ref: '#/components/responses/Error401' }
         '403': { $ref: '#/components/responses/Error403' }
+        '400': { $ref: '#/components/responses/Error400' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409' }
         '422': { $ref: '#/components/responses/Error422' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/produk/{id}:
+    get:
+      operationId: getWebProdukId
+      tags: [Web Lapak]
+      summary: Detail produk untuk penyuntingan (semua status) + hasil cek otomatis terkini
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Produk lengkap.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProdukWeb' }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
+        '500': { $ref: '#/components/responses/Error500' }
     put:
       operationId: putWebProdukId
       tags: [Web Lapak]
       summary: Ubah draf (field, varian, media) dan jalankan cek otomatis
+      description: |
+        Varian: elemen dengan `id` memperbarui, tanpa `id` menambah (varian tidak dihapus). `media` mengganti seluruh set.
+        Pada produk TAYANG, harga/stok varian diubah lewat PATCH `/web/varian/{id}/harga` dan `/stok` (422 bila lewat PUT);
+        mengganti foto utama memicu kurasi ulang ringan (status menjadi MENUNGGU_KURASI).
+        Judul yang mirip >= 85% dengan produk lain di lapak ditolak (422). Status MENUNGGU_KURASI/TAKEDOWN/ARSIP tidak dapat diubah (409).
       parameters:
         - { $ref: '#/components/parameters/IdPath' }
       requestBody:
@@ -636,11 +727,33 @@ paths:
         '401': { $ref: '#/components/responses/Error401' }
         '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
+        '409': { $ref: '#/components/responses/Error409' }
         '422':
           description: Cek otomatis gagal.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/produk/{id}/arsipkan:
+    post:
+      operationId: postWebProdukIdArsipkan
+      tags: [Web Lapak]
+      summary: Arsipkan produk (menggantikan hapus; data dipertahankan untuk audit)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Produk ARSIP.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ARSIP }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/media/presigned:
     post:
@@ -711,7 +824,7 @@ paths:
     patch:
       operationId: patchWebVarianIdHarga
       tags: [Web Lapak]
-      summary: Ubah harga varian (kenaikan >20% memicu kurasi ulang ringan)
+      summary: Ubah harga varian (perubahan >20%, naik atau turun, memicu kurasi ulang ringan)
       parameters:
         - { $ref: '#/components/parameters/IdPath' }
       requestBody:
@@ -738,6 +851,36 @@ paths:
         '403': { $ref: '#/components/responses/Error403' }
         '404': { $ref: '#/components/responses/Error404' }
         '422': { $ref: '#/components/responses/Error422' }
+        '500': { $ref: '#/components/responses/Error500' }
+  /web/varian/{id}/harga-riwayat:
+    get:
+      operationId: getWebVarianIdHargaRiwayat
+      tags: [Web Lapak]
+      summary: Riwayat harga varian (append-only)
+      parameters:
+        - { $ref: '#/components/parameters/IdPath' }
+      responses:
+        '200':
+          description: Riwayat perubahan harga (urut waktu).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [harga_baru_idr, diubah_oleh, diubah_pada]
+                      properties:
+                        harga_lama_idr: { type: [integer, 'null'] }
+                        harga_baru_idr: { $ref: '#/components/schemas/Idr' }
+                        diubah_oleh: { type: string }
+                        diubah_pada: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Error401' }
+        '403': { $ref: '#/components/responses/Error403' }
+        '404': { $ref: '#/components/responses/Error404' }
         '500': { $ref: '#/components/responses/Error500' }
   /web/pesanan-masuk:
     get:
@@ -863,6 +1006,7 @@ paths:
                         umur_antrean_jam: { type: integer, minimum: 0 }
                         prioritas_pangan_segar: { type: boolean }
                   cursor_lanjut: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/Error400' }
         '401': { $ref: '#/components/responses/Error401' }
         '403': { $ref: '#/components/responses/Error403' }
         '500': { $ref: '#/components/responses/Error500' }
@@ -885,7 +1029,7 @@ paths:
                 alasan_baku:
                   type: string
                   description: Contoh `FOTO_TIDAK_ASLI`, `HARGA_TIDAK_WAJAR`, `LABEL_KURANG`. Wajib untuk REVISI/TOLAK.
-                catatan: { type: string, maxLength: 280 }
+                catatan: { type: string, maxLength: 280, description: Wajib untuk TOLAK (tautkan pasal piagam kurasi). }
       responses:
         '200':
           description: Status produk terbaru.
@@ -1006,7 +1150,7 @@ components:
       properties:
         kode:
           type: string
-          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `AKSES_DITOLAK`, `EMAIL_SUDAH_TERDAFTAR`, `KESALAHAN_SERVER`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
+          description: Kode baku `VALIDASI_GAGAL`, `AUTH_KEDALUWARSA`, `AKSES_DITOLAK`, `EMAIL_SUDAH_TERDAFTAR`, `SKU_SUDAH_DIPAKAI`, `STATUS_TIDAK_VALID`, `LAPAK_TIDAK_AKTIF`, `KESALAHAN_SERVER`, `STOK_HABIS`, `HARGA_BERUBAH`, `TRIP_PENUH`, `PESANAN_TIDAK_DITEMUKAN`, `BATAS_LAJU`.
           examples: [STOK_HABIS]
         pesan: { type: string, examples: [Stok varian berubah.] }
         detail: { type: object, additionalProperties: true }
@@ -1113,6 +1257,7 @@ components:
         utama: { type: boolean, description: Tepat satu media utama per produk. }
         lebar: { type: integer, minimum: 1 }
         tinggi: { type: integer, minimum: 1 }
+        ukuran_byte: { type: [integer, 'null'], minimum: 1, description: 'Foto maksimal 5 MB, video maksimal 50 MB.' }
     TripLumbung:
       type: object
       required: [trip_id, jadwal_berangkat, ongkir_idr]
@@ -1288,6 +1433,35 @@ components:
         foto_url:
           type: array
           items: { type: string, format: uri }
+    LapakBuat:
+      type: object
+      required: [nama_produsen, jenis, kontak_wa, nama_lapak, slug, deskripsi, titik_serah_lumbung_id, rekening_payout]
+      properties:
+        nama_produsen: { type: string, minLength: 3, maxLength: 80 }
+        jenis: { type: string, enum: [PERORANGAN, UMKM, KOPERASI, DAPUR_BERSAMA] }
+        kontak_wa: { type: string, pattern: '^\+[1-9][0-9]{7,14}$', examples: ['+6281234567890'] }
+        nama_lapak: { type: string, minLength: 3, maxLength: 60 }
+        slug: { type: string, pattern: '^[a-z0-9-]{3,60}$' }
+        deskripsi: { type: string, minLength: 50, maxLength: 500 }
+        titik_serah_lumbung_id: { type: string }
+        rekening_payout: { type: string, minLength: 6, maxLength: 40, description: Hanya 4 digit terakhir yang disimpan. }
+    ProdukWeb:
+      type: object
+      required: [id, lapak_id, judul, kategori_kode, tag, deskripsi, status, varian, media, cek_otomatis]
+      properties:
+        id: { type: string }
+        lapak_id: { type: string }
+        judul: { type: string }
+        kategori_kode: { $ref: '#/components/schemas/KategoriKode' }
+        tag: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        deskripsi: { type: string }
+        komposisi: { type: [string, 'null'] }
+        alergen: { type: [array, 'null'], items: { type: string } }
+        status: { $ref: '#/components/schemas/ProdukStatus' }
+        perlu_revisi_catatan: { type: [string, 'null'] }
+        varian: { type: array, items: { $ref: '#/components/schemas/VarianProduk' } }
+        media: { type: array, items: { $ref: '#/components/schemas/MediaProduk' } }
+        cek_otomatis: { $ref: '#/components/schemas/CekOtomatis' }
     DrafProdukPayload:
       type: object
       required: [lapak_id, judul, kategori_kode, tag, deskripsi]
