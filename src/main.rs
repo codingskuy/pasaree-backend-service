@@ -1,22 +1,25 @@
-mod katalog;
-mod lapak;
-mod transaksi;
-
-use axum::{Json, Router, routing::get};
-use serde_json::{Value, json};
-
-async fn kesehatan() -> Json<Value> {
-    Json(json!({"layanan": "pasaree-backend-service", "status": "baik", "db": "pasaree"}))
-}
+use pasaree::{app, config::Config, state::AppState};
+use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    let app = Router::new()
-        .route("/kesehatan", get(kesehatan))
-        .nest("/katalog", katalog::rute())
-        .nest("/lapak", lapak::rute())
-        .nest("/transaksi", transaksi::rute());
-    let pendengar = tokio::net::TcpListener::bind("0.0.0.0:8101").await.unwrap();
-    axum::serve(pendengar, app).await.unwrap();
+    let config = Config::dari_env().unwrap_or_else(|e| panic!("konfigurasi: {e}"));
+    let db = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.database_url)
+        .await
+        .expect("koneksi DB pasaree");
+    sqlx::migrate!("./migrations")
+        .run(&db)
+        .await
+        .expect("migrasi");
+    let port = config.port;
+    let pendengar = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .expect("bind port");
+    tracing::info!(port, "pasaree-backend-service jalan");
+    axum::serve(pendengar, app(AppState::baru(db, config)))
+        .await
+        .expect("serve");
 }
