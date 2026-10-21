@@ -8,15 +8,18 @@ pub mod error;
 pub mod ids;
 pub mod json;
 pub mod katalog;
+pub mod keranjang;
 pub mod keuangan;
 pub mod kurasi;
 pub mod lapak;
 pub mod lumbung;
 pub mod model;
 pub mod pesanan;
+pub mod pesanan_web;
 pub mod state;
 pub mod trip;
 pub mod tugas;
+pub mod ulasan;
 
 use std::time::Duration;
 
@@ -42,6 +45,11 @@ pub fn app(state: AppState) -> Router {
         .merge(katalog::rute())
         .merge(lapak::rute())
         .merge(kurasi::rute())
+        .merge(trip::rute())
+        .merge(keranjang::rute())
+        .merge(pesanan::rute())
+        .merge(pesanan_web::rute())
+        .merge(ulasan::rute())
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
